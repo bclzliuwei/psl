@@ -1,3 +1,7 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include <windows.h>
 #include <windowsx.h>
 #include <commdlg.h>
@@ -7,6 +11,7 @@
 #include "scheme_model.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -14,6 +19,7 @@
 namespace {
 using namespace Gdiplus;
 constexpr float paletteWidth = 224;
+constexpr float paletteTabWidth = 28;
 constexpr float headerHeight = 64;
 constexpr float footerHeight = 30;
 constexpr float blockWidth = 172;
@@ -46,6 +52,7 @@ struct Editor {
     int selectedWire = -1;
     int dragging = -1;
     bool paletteDrag = false;
+    bool paletteVisible = true;
     bool panning = false;
     bool dirty = false;
     PortHit pending;
@@ -54,6 +61,10 @@ struct Editor {
 } editor;
 
 std::wstring wide(const std::string& text) { return {text.begin(), text.end()}; }
+
+float canvasLeft() { return editor.paletteVisible ? paletteWidth : paletteTabWidth; }
+
+RectF paletteTab() { return {canvasLeft() - paletteTabWidth, 82, paletteTabWidth, 28}; }
 
 float blockHeight(const scheme::Block& block) {
     const auto& type = scheme::blockTypes()[block.type];
@@ -65,17 +76,17 @@ PointF portPoint(const scheme::Block& block, int port, bool output) {
 }
 
 PointF world(PointF point) {
-    return {(point.X - paletteWidth - editor.pan.X) / editor.zoom,
+    return {(point.X - canvasLeft() - editor.pan.X) / editor.zoom,
         (point.Y - headerHeight - editor.pan.Y) / editor.zoom};
 }
 
 PointF screen(PointF point) {
-    return {paletteWidth + editor.pan.X + point.X * editor.zoom,
+    return {canvasLeft() + editor.pan.X + point.X * editor.zoom,
         headerHeight + editor.pan.Y + point.Y * editor.zoom};
 }
 
 bool onCanvas(PointF point) {
-    return point.X > paletteWidth && point.Y > headerHeight && point.Y < editor.height - footerHeight;
+    return point.X > canvasLeft() && point.Y > headerHeight && point.Y < editor.height - footerHeight;
 }
 
 void refresh(bool changed = false) {
@@ -106,11 +117,15 @@ Color accent(int type) {
     return colors[type];
 }
 
+std::array<PointF, 4> wirePath(PointF start, PointF end) {
+    const float middleX = (start.X + end.X) / 2;
+    return {start, PointF(middleX, start.Y), PointF(middleX, end.Y), end};
+}
+
 void wire(Graphics& graphics, PointF start, PointF end, Color color, float width) {
-    const float bend = std::max(60.0f, std::abs(end.X - start.X) * 0.45f);
+    const auto path = wirePath(start, end);
     Pen pen(color, width);
-    graphics.DrawBezier(&pen, start, PointF(start.X + bend, start.Y),
-        PointF(end.X - bend, end.Y), end);
+    graphics.DrawLines(&pen, path.data(), static_cast<INT>(path.size()));
 }
 
 void render(Graphics& graphics) {
@@ -122,16 +137,22 @@ void render(Graphics& graphics) {
     SolidBrush dot(Color(209, 216, 222));
     Pen divider(Color(222, 227, 231));
     graphics.FillRectangle(&white, 0.0f, 0.0f, editor.width, headerHeight);
-    graphics.FillRectangle(&panel, 0.0f, headerHeight, paletteWidth, editor.height - headerHeight);
-    graphics.DrawLine(&divider, paletteWidth, headerHeight, paletteWidth, editor.height - footerHeight);
+    graphics.FillRectangle(&panel, 0.0f, headerHeight, canvasLeft(), editor.height - headerHeight);
+    graphics.DrawLine(&divider, canvasLeft(), headerHeight, canvasLeft(), editor.height - footerHeight);
     graphics.DrawLine(&divider, 0.0f, headerHeight, editor.width, headerHeight);
     text(graphics, L"Block Scheme", 24, 10, 220, 40, 23, Color(33, 43, 51), true);
     text(graphics, std::to_wstring(editor.graph.blocks().size()) + L" blocks   /   " +
         std::to_wstring(editor.graph.connections().size()) + L" connections", 280, 10,
         std::max(0.0f, editor.width - 304), 40, 14, Color(97, 110, 122), false, true);
-    text(graphics, L"BLOCK PALETTE", 20, 82, 180, 26, 12, Color(97, 110, 122), true);
+    const auto tab = paletteTab();
+    graphics.FillRectangle(&white, tab);
+    graphics.DrawRectangle(&divider, tab);
+    text(graphics, editor.paletteVisible ? L"<" : L">", tab.X + 8, tab.Y, 16, tab.Height,
+        16, Color(67, 80, 91), true);
+    if (editor.paletteVisible)
+        text(graphics, L"BLOCK PALETTE", 20, 82, 170, 26, 12, Color(97, 110, 122), true);
     const auto& types = scheme::blockTypes();
-    for (int index = 0; index < static_cast<int>(types.size()); ++index) {
+    for (int index = 0; editor.paletteVisible && index < static_cast<int>(types.size()); ++index) {
         const float top = 122.0f + index * 70.0f;
         SolidBrush fill(editor.palette == index ? Color(225, 239, 249) : Color(255, 255, 255));
         SolidBrush color(accent(index));
@@ -147,18 +168,18 @@ void render(Graphics& graphics) {
     }
 
     const auto state = graphics.Save();
-    graphics.SetClip(RectF(paletteWidth + 1, headerHeight + 1,
-        std::max(0.0f, editor.width - paletteWidth - 1),
+    graphics.SetClip(RectF(canvasLeft() + 1, headerHeight + 1,
+        std::max(0.0f, editor.width - canvasLeft() - 1),
         std::max(0.0f, editor.height - headerHeight - footerHeight - 1)));
     const float spacing = 24 * editor.zoom;
-    const float gridX = paletteWidth + std::fmod(editor.pan.X, spacing);
+    const float gridX = canvasLeft() + std::fmod(editor.pan.X, spacing);
     const float gridY = headerHeight + std::fmod(editor.pan.Y, spacing);
     for (float horizontal = gridX; horizontal < editor.width; horizontal += spacing) {
         for (float vertical = gridY; vertical < editor.height - footerHeight; vertical += spacing) {
             graphics.FillEllipse(&dot, horizontal, vertical, 2.0f, 2.0f);
         }
     }
-    graphics.TranslateTransform(paletteWidth + editor.pan.X, headerHeight + editor.pan.Y);
+    graphics.TranslateTransform(canvasLeft() + editor.pan.X, headerHeight + editor.pan.Y);
     graphics.ScaleTransform(editor.zoom, editor.zoom);
     int linkIndex = 0;
     for (const auto& link : editor.graph.connections()) {
@@ -243,16 +264,10 @@ int hitWire(PointF point) {
     for (const auto& link : editor.graph.connections()) {
         const auto start = portPoint(*editor.graph.findBlock(link.source), link.output, true);
         const auto end = portPoint(*editor.graph.findBlock(link.target), link.input, false);
-        const float bend = std::max(60.0f, std::abs(end.X - start.X) * 0.45f);
-        PointF previous = start;
-        for (int step = 1; step <= 80; ++step) {
-            const float fraction = step / 80.0f;
-            const float inverse = 1 - fraction;
-            const PointF sample{
-                inverse * inverse * inverse * start.X + 3 * inverse * inverse * fraction * (start.X + bend) +
-                    3 * inverse * fraction * fraction * (end.X - bend) + fraction * fraction * fraction * end.X,
-                inverse * inverse * inverse * start.Y + 3 * inverse * inverse * fraction * start.Y +
-                    3 * inverse * fraction * fraction * end.Y + fraction * fraction * fraction * end.Y};
+        const auto path = wirePath(start, end);
+        for (size_t segment = 1; segment < path.size(); ++segment) {
+            const auto previous = path[segment - 1];
+            const auto sample = path[segment];
             const float deltaX = sample.X - previous.X;
             const float deltaY = sample.Y - previous.Y;
             const float length = deltaX * deltaX + deltaY * deltaY;
@@ -260,7 +275,6 @@ int hitWire(PointF point) {
                 (point.Y - previous.Y) * deltaY) / length, 0.0f, 1.0f) : 0;
             if (std::hypot(point.X - previous.X - along * deltaX,
                 point.Y - previous.Y - along * deltaY) < 7 / editor.zoom) return index;
-            previous = sample;
         }
         ++index;
     }
@@ -284,7 +298,15 @@ void finishConnection(PortHit hit) {
 
 void leftDown(PointF point) {
     editor.mouse = point;
-    if (point.X < paletteWidth && point.Y >= 122) {
+    if (paletteTab().Contains(point)) {
+        cancelGesture();
+        editor.palette = -1;
+        editor.paletteVisible = !editor.paletteVisible;
+        editor.status = L"Ready";
+        refresh();
+        return;
+    }
+    if (editor.paletteVisible && point.X < paletteWidth && point.Y >= 122) {
         const int type = static_cast<int>((point.Y - 122) / 70);
         if (type < static_cast<int>(scheme::blockTypes().size()) && std::fmod(point.Y - 122, 70.0f) < 58) {
             cancelGesture();
@@ -376,7 +398,7 @@ void moveMouse(PointF point) {
 void zoomAt(PointF point, float factor) {
     const auto anchor = world(point);
     editor.zoom = std::clamp(editor.zoom * factor, 0.35f, 2.5f);
-    editor.pan = {point.X - paletteWidth - anchor.X * editor.zoom,
+    editor.pan = {point.X - canvasLeft() - anchor.X * editor.zoom,
         point.Y - headerHeight - anchor.Y * editor.zoom};
     refresh();
 }
@@ -396,10 +418,10 @@ void fit() {
             right = std::max(right, block.x + blockWidth);
             bottom = std::max(bottom, block.y + blockHeight(block));
         }
-        const float availableWidth = editor.width - paletteWidth - 72;
+        const float availableWidth = editor.width - canvasLeft() - 72;
         const float availableHeight = editor.height - headerHeight - footerHeight - 72;
         editor.zoom = std::clamp(std::min(availableWidth / (right - left), availableHeight / (bottom - top)), 0.35f, 1.5f);
-        editor.pan = {(editor.width - paletteWidth - (right - left) * editor.zoom) / 2 - left * editor.zoom,
+        editor.pan = {(editor.width - canvasLeft() - (right - left) * editor.zoom) / 2 - left * editor.zoom,
             (editor.height - headerHeight - footerHeight - (bottom - top) * editor.zoom) / 2 - top * editor.zoom};
     }
     refresh();
@@ -588,8 +610,8 @@ LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM parameter, LP
             if (parameter == 'S') command(GetKeyState(VK_SHIFT) & 0x8000 ? commandSaveAs : commandSave);
             else if (parameter == 'O') command(commandOpen);
             else if (parameter == 'N') command(commandNew);
-            else if (parameter == VK_OEM_PLUS || parameter == VK_ADD) zoomAt({(editor.width + paletteWidth) / 2, editor.height / 2}, 1.12f);
-            else if (parameter == VK_OEM_MINUS || parameter == VK_SUBTRACT) zoomAt({(editor.width + paletteWidth) / 2, editor.height / 2}, 1 / 1.12f);
+            else if (parameter == VK_OEM_PLUS || parameter == VK_ADD) zoomAt({(editor.width + canvasLeft()) / 2, editor.height / 2}, 1.12f);
+            else if (parameter == VK_OEM_MINUS || parameter == VK_SUBTRACT) zoomAt({(editor.width + canvasLeft()) / 2, editor.height / 2}, 1 / 1.12f);
         }
         return 0;
     case WM_CLOSE: if (confirmDiscard()) DestroyWindow(window); return 0;
@@ -624,11 +646,19 @@ bool smokeTest() {
     };
     const auto click = [&](PointF point) { send(WM_LBUTTONDOWN, point); send(WM_LBUTTONUP, point); };
     click({70, 145});
+    click({paletteWidth - paletteTabWidth / 2, 96});
+    if (editor.paletteVisible || editor.palette != -1 || editor.dirty ||
+        !editor.graph.blocks().empty() || onCanvas({14, 145}) || !onCanvas({70, 145})) return false;
+    click({paletteTabWidth / 2, 96});
+    if (!editor.paletteVisible || onCanvas({70, 145}) || editor.dirty) return false;
+    click({70, 145});
     click(screen({40, 80}));
     send(WM_LBUTTONDOWN, {70, 495});
     send(WM_MOUSEMOVE, screen({420, 80}));
     send(WM_LBUTTONUP, screen({420, 80}));
     if (editor.graph.blocks().size() != 2) return false;
+    click({paletteWidth - paletteTabWidth / 2, 96});
+    if (editor.paletteVisible) return false;
     const int source = editor.graph.blocks()[0].id;
     const int sink = editor.graph.blocks()[1].id;
     click(screen(portPoint(*editor.graph.findBlock(source), 0, true)));
@@ -638,6 +668,14 @@ bool smokeTest() {
     send(WM_MOUSEMOVE, screen({500, 132}));
     send(WM_LBUTTONUP, screen({500, 132}));
     if (std::abs(editor.graph.findBlock(sink)->x - 460) > 2) return false;
+    const auto hiddenAnchor = world({700, 380});
+    zoomAt({700, 380}, 1.12f);
+    const auto hiddenZoomedAnchor = world({700, 380});
+    if (std::hypot(hiddenAnchor.X - hiddenZoomedAnchor.X, hiddenAnchor.Y - hiddenZoomedAnchor.Y) > 0.01f) return false;
+    editor.zoom = 1;
+    editor.pan = {36, 40};
+    click({paletteTabWidth / 2, 96});
+    if (!editor.paletteVisible || editor.graph.blocks().size() != 2) return false;
     click({70, 285});
     click(screen({260, 260}));
     if (editor.graph.blocks().size() != 3) return false;
@@ -660,6 +698,14 @@ bool smokeTest() {
     editor.pan = {36, 40};
     const auto wireStart = portPoint(*editor.graph.findBlock(source), 0, true);
     const auto wireEnd = portPoint(*editor.graph.findBlock(sink), 0, false);
+    const auto connectionPath = wirePath(wireStart, wireEnd);
+    for (size_t segment = 1; segment < connectionPath.size(); ++segment) {
+        const auto start = connectionPath[segment - 1];
+        const auto end = connectionPath[segment];
+        if (start.X != end.X && start.Y != end.Y) return false;
+        click(screen({(start.X + end.X) / 2, (start.Y + end.Y) / 2}));
+        if (editor.selectedWire != 0) return false;
+    }
     click(screen({(wireStart.X + wireEnd.X) / 2, (wireStart.Y + wireEnd.Y) / 2}));
     if (editor.selectedWire != 0) return false;
     SendMessageW(editor.window, WM_KEYDOWN, VK_DELETE, 0);
