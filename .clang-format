@@ -1,0 +1,34 @@
+BasedOnStyle: Google
+Language: Cpp
+ColumnLimit: 100           # Modern line length
+IndentWidth: 2             # Balanced indentation
+UseTab: Never              # Spaces only
+TabWidth: 2                # For tab fallback
+
+# Brace Wrapping (Allman/BSD Style - braces on new lines)
+BraceWrapping:
+  AfterClass: true         # class Foo \n {
+  AfterControlStatement: true # if (x) \n {
+  AfterEnum: true          # enum Foo \n {
+  AfterFunction: true      # void foo() \n {
+  AfterNamespace: true     # namespace \n {
+  AfterStruct: true        # struct Foo \n {
+  AfterUnion: true         # union Foo \n {
+  BeforeCatch: true        # } \n catch {
+  BeforeElse: true         # } \n else {
+  IndentBraces: false      # No extra indent for braces
+
+# Spacing
+SpaceBeforeParens: ControlStatements  # if (x) vs. func(x)
+SpaceInEmptyParentheses: false        # func() not func( )
+SpacesInAngles: Never                 # vector<int> not vector< int >
+
+# Pointers and References
+PointerAlignment: Left     # int* x (not int *x)
+DerivePointerAlignment: false
+
+# Line Breaking
+AllowShortFunctionsOnASingleLine: Empty  # Only allow empty functions on one line
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Custom               # Use BraceWrapping rules above
