@@ -2,11 +2,11 @@
 #define NOMINMAX
 #endif
 
-#include <commdlg.h>
-#include <gdiplus.h>
-#include <objidl.h>
 #include <windows.h>
 #include <windowsx.h>
+#include <commdlg.h>
+#include <objidl.h>
+#include <gdiplus.h>
 
 #include <algorithm>
 #include <array>
